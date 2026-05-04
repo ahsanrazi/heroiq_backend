@@ -1,7 +1,9 @@
 # Gunicorn configuration for production
 # Run: gunicorn app.main:app -c gunicorn.conf.py
 
-bind = "127.0.0.1:8000"
+import os
+
+bind = f"0.0.0.0:{os.environ.get('PORT', '8000')}"
 workers = 4
 worker_class = "uvicorn.workers.UvicornWorker"
 timeout = 120
