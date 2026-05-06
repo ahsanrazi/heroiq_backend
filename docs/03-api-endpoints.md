@@ -181,7 +181,8 @@ Core endpoint. Called by Next.js after credit verification. Embeds the query and
             "summary": "Expert root canal therapy with minimal discomfort using the latest dental technology.",
             "recommended_cta": "Book a Consultation",
             "page_url": "/services/root-canal-treatment",
-            "score": 0.94
+            "score": 0.94,
+            "matched_chunk": "Our root canal treatment uses the latest rotary endodontic technology to ensure a comfortable, virtually pain-free experience. Most patients return to normal activities the same day..."
         },
         {
             "wp_post_id": 15,
@@ -189,7 +190,8 @@ Core endpoint. Called by Next.js after credit verification. Embeds the query and
             "summary": "Modern techniques ensure comfortable dental procedures for anxious patients.",
             "recommended_cta": "Learn More",
             "page_url": "/services/pain-free-dentistry",
-            "score": 0.87
+            "score": 0.87,
+            "matched_chunk": "We specialize in anxiety-free dentistry. From sedation options to numbing techniques that work in seconds, our team is trained to keep nervous patients comfortable..."
         },
         {
             "wp_post_id": 8,
@@ -197,13 +199,17 @@ Core endpoint. Called by Next.js after credit verification. Embeds the query and
             "summary": "Same-day emergency appointments for urgent dental needs including root canals.",
             "recommended_cta": "Call Now",
             "page_url": "/services/emergency",
-            "score": 0.72
+            "score": 0.72,
+            "matched_chunk": "Emergency root canals available 7 days a week. Walk-ins welcome — call us and we will see you the same day for any acute dental pain or infection..."
         }
     ],
     "query": "best dentist for root canal",
     "results_count": 3,
     "response_time_ms": 260
 }
+
+// `matched_chunk`: text of the highest-scoring Pinecone chunk for this page (≤1000 chars).
+// Useful for displaying excerpts in the UI, debugging poor matches, and result tuning.
 
 // Response 200 (no results)
 {

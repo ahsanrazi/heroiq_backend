@@ -13,6 +13,7 @@ class SearchResult(BaseModel):
     recommended_cta: str
     page_url: str
     score: float
+    matched_chunk: str = ""
 
 
 class SearchResponse(BaseModel):

@@ -55,6 +55,7 @@ async def search_pages(
                 "recommended_cta": meta["recommended_cta"],
                 "page_url": meta["page_url"],
                 "score": round(match["score"], 2),
+                "matched_chunk": meta.get("chunk_text", ""),
             }
 
     # 4. Sort by score descending, limit results
