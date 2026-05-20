@@ -8,4 +8,4 @@ def calc_cost(model: str, input_tokens: int, output_tokens: int = 0) -> float:
     p = OPENAI_PRICING.get(model)
     if not p:
         return 0.0
-    return round(input_tokens * p["input"] + output_tokens * p["output"], 6)
+    return round(input_tokens * p["input"] + output_tokens * p["output"], 12)

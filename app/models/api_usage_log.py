@@ -15,5 +15,5 @@ class ApiUsageLog(Base):
     model = Column(String(50), nullable=False)
     input_tokens = Column(Integer, nullable=False)
     output_tokens = Column(Integer, default=0)
-    cost_usd = Column(Numeric(10, 6))
+    cost_usd = Column(Numeric(17, 12))
     created_at = Column(DateTime(timezone=False), default=datetime.utcnow, index=True)
