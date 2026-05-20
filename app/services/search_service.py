@@ -6,6 +6,7 @@ from app.config import settings
 from app.models.api_usage_log import ApiUsageLog
 from app.schemas.search import SearchResult
 from app.services.embedding_service import generate_embedding
+from app.services.openai_pricing import calc_cost
 from app.services.pinecone_service import query_vectors
 
 logger = logging.getLogger(__name__)
@@ -31,6 +32,7 @@ async def search_pages(
         model="text-embedding-3-small",
         input_tokens=embed_result["usage_tokens"],
         output_tokens=0,
+        cost_usd=calc_cost("text-embedding-3-small", embed_result["usage_tokens"]),
     ))
     await db.commit()
 

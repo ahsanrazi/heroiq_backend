@@ -22,6 +22,7 @@ from app.schemas.index import (
 from app.services.chunking_service import chunk_text
 from app.services.embedding_service import generate_embeddings_batch
 from app.services.llm_service import generate_search_card
+from app.services.openai_pricing import calc_cost
 from app.services.pinecone_service import (
     delete_namespace,
     delete_vectors_by_page,
@@ -89,6 +90,7 @@ async def index_single_page(
         operation="index_embed",
         model="text-embedding-3-small",
         input_tokens=embed_result["usage_tokens"],
+        cost_usd=calc_cost("text-embedding-3-small", embed_result["usage_tokens"]),
     )
 
     # Generate search card via LLM
@@ -101,6 +103,7 @@ async def index_single_page(
         model="gpt-4o-mini",
         input_tokens=card_data["input_tokens"],
         output_tokens=card_data["output_tokens"],
+        cost_usd=calc_cost("gpt-4o-mini", card_data["input_tokens"], card_data["output_tokens"]),
     )
 
     # Build Pinecone vectors
