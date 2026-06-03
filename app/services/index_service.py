@@ -79,6 +79,14 @@ async def index_single_page(
 
     # Chunk content
     chunks = chunk_text(page_data.content)
+    if not chunks:
+        # Empty / whitespace-only page → no chunks. Skip instead of calling
+        # OpenAI with an empty array (which returns HTTP 400).
+        return IndexPageResponse(
+            status="skipped",
+            wp_post_id=page_data.wp_post_id,
+            reason="empty_content",
+        )
 
     # Generate embeddings for all chunks
     embed_result = await generate_embeddings_batch(chunks)

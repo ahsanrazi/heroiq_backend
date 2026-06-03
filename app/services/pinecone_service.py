@@ -10,9 +10,17 @@ logger = logging.getLogger(__name__)
 
 pc = Pinecone(api_key=settings.PINECONE_API_KEY)
 
+_index = None
+
 
 def _get_index():
-    return pc.Index(settings.PINECONE_INDEX_NAME)
+    """Build the Pinecone index client once and reuse it for the process
+    lifetime. Avoids reconstructing the client (host resolution + setup) on every
+    upsert/query/delete call."""
+    global _index
+    if _index is None:
+        _index = pc.Index(settings.PINECONE_INDEX_NAME)
+    return _index
 
 
 def get_namespace(tenant_id: str) -> str:
