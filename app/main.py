@@ -7,9 +7,6 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.api.v1.router import api_router
 from app.config import settings
 from app.core.exceptions import register_exception_handlers
-from app.core.rate_limiter import limiter
-from slowapi import _rate_limit_exceeded_handler
-from slowapi.errors import RateLimitExceeded
 
 
 @asynccontextmanager
@@ -28,17 +25,14 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
-# Rate limiting
-app.state.limiter = limiter
-app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
-
-# CORS
+# CORS — deny-by-default. All callers are server-to-server (Next.js → Python),
+# which doesn't go through CORS. ALLOWED_ORIGINS env var opens specific browser origins if needed.
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_origins=settings.allowed_origins_list,
+    allow_credentials=False,
+    allow_methods=["GET", "POST", "DELETE", "OPTIONS"],
+    allow_headers=["Content-Type", "X-Internal-Token", "X-Tenant-Id", "Authorization"],
 )
 
 # Exception handlers

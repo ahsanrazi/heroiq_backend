@@ -2,22 +2,26 @@
 
 Two storage systems: **PostgreSQL** (shared database, Python owns 3 tables), **Pinecone** (vector embeddings).
 
-> Python backend shares a PostgreSQL database with the Next.js backend. Python owns `content_pages`, `indexing_jobs`, and `api_usage_logs`. All other tables (tenants, config, billing, leads, analytics, etc.) are owned by Next.js.
+> Python backend shares a PostgreSQL cluster with the Next.js backend. Python owns `content_pages`, `indexing_jobs`, and `api_usage_logs`. All other tables (the Prisma-managed `Tenant`, `Config`, billing, leads, analytics, etc.) are owned by Next.js. In production the two services use **separate databases inside the same DigitalOcean Managed cluster** — `heroiq_app` (Next.js) and `heroiq_ai` (Python).
 
 ---
 
 ## 1. PostgreSQL Tables (Python-owned)
 
+The SQL below shows the *logical* shape of each table. The actual definitions live in the SQLAlchemy models under `app/models/` and are managed by Alembic migrations under `app/db/migrations/`. Column types reflect what the code actually creates.
+
 ### `content_pages` — Indexed content tracking
 
 **Owned by:** Python backend
+**Model:** `app/models/content_page.py`
 
 Tracks what content has been indexed per tenant. The `content_hash` field enables delta updates — on re-sync, compare hash. If unchanged, skip re-indexing.
 
 ```sql
 CREATE TABLE content_pages (
-    id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    tenant_id       UUID NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+    id              VARCHAR PRIMARY KEY,            -- UUID v4 string, generated in Python
+    tenant_id       VARCHAR NOT NULL                -- Prisma string ID, FK to "Tenant".id
+                    REFERENCES "Tenant"(id) ON DELETE CASCADE,
     wp_post_id      BIGINT NOT NULL,
     page_title      VARCHAR(500) NOT NULL,
     page_url        VARCHAR(500) NOT NULL,
@@ -25,9 +29,9 @@ CREATE TABLE content_pages (
     content_hash    VARCHAR(64) NOT NULL,           -- SHA-256 for delta updates
     chunk_count     INTEGER DEFAULT 0,
     is_indexed      BOOLEAN DEFAULT FALSE,
-    last_indexed_at TIMESTAMP WITH TIME ZONE,
-    created_at      TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
-    updated_at      TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    last_indexed_at TIMESTAMP,
+    created_at      TIMESTAMP DEFAULT NOW(),
+    updated_at      TIMESTAMP DEFAULT NOW(),
 
     CONSTRAINT unique_tenant_page UNIQUE (tenant_id, wp_post_id)
 );
@@ -35,16 +39,20 @@ CREATE TABLE content_pages (
 CREATE INDEX idx_content_pages_tenant ON content_pages(tenant_id);
 ```
 
+> **Note on types:** `id` and `tenant_id` are stored as `VARCHAR` (string), not `UUID`. Prisma in `heroiq-super-admin/` uses string primary keys for the `Tenant` table, so the Python side mirrors that. The `id` happens to be a UUID v4 generated in Python, but the column type is plain string.
+
 ### `indexing_jobs` — Bulk indexing job tracking
 
 **Owned by:** Python backend
+**Model:** `app/models/indexing_job.py`
 
 Tracks progress of bulk indexing operations. Created when `POST /api/index/bulk` is called, updated as pages are processed, polled via `GET /api/index/status/{job_id}`.
 
 ```sql
 CREATE TABLE indexing_jobs (
-    id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    tenant_id       UUID NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+    id              VARCHAR PRIMARY KEY,            -- UUID v4 string
+    tenant_id       VARCHAR NOT NULL
+                    REFERENCES "Tenant"(id) ON DELETE CASCADE,
     status          VARCHAR(20) NOT NULL DEFAULT 'queued',
                     -- queued, processing, completed, failed
     total_pages     INTEGER DEFAULT 0,
@@ -52,8 +60,8 @@ CREATE TABLE indexing_jobs (
     pages_skipped   INTEGER DEFAULT 0,
     pages_failed    INTEGER DEFAULT 0,
     errors          JSONB DEFAULT '[]',
-    started_at      TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
-    completed_at    TIMESTAMP WITH TIME ZONE
+    started_at      TIMESTAMP DEFAULT NOW(),
+    completed_at    TIMESTAMP
 );
 
 CREATE INDEX idx_indexing_jobs_tenant ON indexing_jobs(tenant_id);
@@ -63,63 +71,72 @@ CREATE INDEX idx_indexing_jobs_status ON indexing_jobs(status);
 ### `api_usage_logs` — OpenAI API cost tracking
 
 **Owned by:** Python backend
+**Model:** `app/models/api_usage_log.py`
 
 Logs every OpenAI API call for cost monitoring. Helps track actual expenses per tenant and per operation type.
 
 ```sql
 CREATE TABLE api_usage_logs (
-    id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    tenant_id       UUID NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+    id              VARCHAR PRIMARY KEY,            -- UUID v4 string
+    tenant_id       VARCHAR NOT NULL
+                    REFERENCES "Tenant"(id) ON DELETE CASCADE,
     operation       VARCHAR(30) NOT NULL,
                     -- index_generate, index_embed, search_embed
     model           VARCHAR(50) NOT NULL,
                     -- gpt-4o-mini, text-embedding-3-small
     input_tokens    INTEGER NOT NULL,
     output_tokens   INTEGER DEFAULT 0,
-    cost_usd        DECIMAL(10, 6),
-    created_at      TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+    cost_usd        NUMERIC(17, 12),                -- picocent precision
+    created_at      TIMESTAMP DEFAULT NOW()
 );
 
 CREATE INDEX idx_api_usage_tenant ON api_usage_logs(tenant_id);
 CREATE INDEX idx_api_usage_created ON api_usage_logs(created_at);
 ```
 
+> **`cost_usd` precision:** the column is `NUMERIC(17, 12)` — 12 decimal places. Originally `DECIMAL(10, 6)`; it was widened twice (to `(14, 9)` then to `(17, 12)`) because tiny OpenAI operations like a 6-token query embed cost ~`$0.00000012`, which truncated to zero at lower precision. Migrations: `20260520120000_widen_cost_usd_precision` and `20260520140000_widen_cost_usd_to_17_12`.
+
 ---
 
 ## 2. PostgreSQL Tables (Read-only Reference)
 
-### `tenants` — Tenant validation
+### `Tenant` — Tenant validation
 
-**Owned by:** Next.js backend
-**Python access:** READ-ONLY (for API key validation and tenant status check)
+**Owned by:** Next.js / Prisma (in `heroiq-super-admin/prisma/schema.prisma`)
+**Python access:** READ-ONLY (for API-key validation and tenant status check)
+**Model:** `app/models/tenant.py`
 
-Python only uses these columns:
+The Prisma table is named `Tenant` (PascalCase, quoted in SQL). Columns Python reads:
 
-| Column | Purpose |
-|--------|---------|
-| `id` | Tenant UUID — used to filter `content_pages` and Pinecone namespaces |
-| `status` | Check if tenant is `active` before processing requests |
-| `api_key_hash` | Validate incoming `X-API-Key` header |
-| `site_domain` | Identify tenant by domain |
+| Python attribute | DB column | Purpose |
+|---|---|---|
+| `id` | `id` | Tenant string ID — used to filter `content_pages`, `indexing_jobs`, `api_usage_logs`, and Pinecone namespaces. |
+| `serial_key` | `serialKey` | Validate incoming `X-API-Key` header (plaintext comparison). |
+| `status` | `status` | Postgres enum `TenantStatus` (values: `PENDING`, `ACTIVE`, `PAST_DUE`, `EXPIRED`). Tenant must be `ACTIVE` to authenticate. |
+| `plugin_site_url` | `pluginSiteUrl` | Bound WordPress site URL (informational; not enforced by Python). |
 
 ```sql
--- Full table owned by Next.js. Python reads only:
-SELECT id, status, api_key_hash, site_domain
-FROM tenants
-WHERE api_key_hash = $1 AND status = 'active';
+-- Owned by Prisma. Python performs only this lookup:
+SELECT id, "serialKey", status, "pluginSiteUrl"
+FROM "Tenant"
+WHERE "serialKey" = $1 AND status = 'ACTIVE';
 ```
+
+> The legacy `api_key_hash` and `site_domain` column names referenced in earlier doc revisions **do not exist**. Auth happens via plaintext `serialKey` comparison. If the team later moves to hashed keys, both the Prisma schema and `app/models/tenant.py` will need migrations.
 
 ---
 
 ## 3. Entity Relationships
 
 ```
-tenants (read-only, owned by Next.js)
+Tenant (read-only, owned by Next.js/Prisma)
     │
-    ├──── (N) content_pages      (Python-owned)
-    ├──── (N) indexing_jobs       (Python-owned)
-    └──── (N) api_usage_logs     (Python-owned)
+    ├──── (N) content_pages      (Python-owned, CASCADE on tenant delete)
+    ├──── (N) indexing_jobs       (Python-owned, CASCADE on tenant delete)
+    └──── (N) api_usage_logs     (Python-owned, CASCADE on tenant delete)
 ```
+
+When the super-admin deletes a tenant from `/admin/clients/[id]`, the `ON DELETE CASCADE` clauses above remove all Python-owned rows for that tenant automatically. The Pinecone namespace is wiped separately by the `DELETE /api/index/tenant/{tenant_id}` call that the delete handler also fires.
 
 ---
 
@@ -128,21 +145,25 @@ tenants (read-only, owned by Next.js)
 ### Index Configuration
 
 ```
-Index Name:  heroiq-search
+Index Name:  heroiq-search       (env: PINECONE_INDEX_NAME)
 Metric:      cosine
-Dimensions:  1536 (OpenAI text-embedding-3-small)
-Cloud:       AWS
-Region:      us-east-1
+Dimensions:  1536                 (OpenAI text-embedding-3-small)
+Cloud:       AWS                  (configured in Pinecone dashboard, not in code)
+Region:      us-east-1            (configured in Pinecone dashboard, not in code)
 ```
+
+The cloud/region selection is not represented in this repo — only the index name is read from env (`PINECONE_INDEX_NAME`, defaults to `heroiq-search`). The Pinecone account and index must be provisioned in the Pinecone console with the correct configuration before the service can run.
 
 ### Namespace Strategy
 
 One namespace per tenant — complete data isolation:
 
 ```
-tenant_a1b2c3d4-e5f6-7890-abcd-ef1234567890   → Tenant A
-tenant_f9e8d7c6-b5a4-3210-fedc-ba0987654321   → Tenant B
+tenant_clt1xyz0abc...   → Tenant A
+tenant_clt2def4ghi...   → Tenant B
 ```
+
+(The IDs above are Prisma cuid/string IDs, not Postgres UUIDs.)
 
 ### Vector Record
 
@@ -171,11 +192,13 @@ Search card data (`display_title`, `summary`, `recommended_cta`) is stored **ins
 
 ### Chunking Parameters
 
-| Parameter | Value |
-|-----------|-------|
-| Chunk size | 500 tokens |
-| Overlap | 50 tokens |
-| Min chunk size | 50 tokens (skip tiny chunks) |
+| Parameter | Env var | Default |
+|-----------|---------|---------|
+| Chunk size | `CHUNK_SIZE` | 500 tokens |
+| Overlap | `CHUNK_OVERLAP` | 50 tokens |
+| Min chunk size | `MIN_CHUNK_SIZE` | 50 tokens (skip tiny chunks) |
+
+All three are read from `app/config.py` and can be overridden via environment variables.
 
 ---
 
@@ -183,17 +206,23 @@ Search card data (`display_title`, `summary`, `recommended_cta`) is stored **ins
 
 | Table | Owner | Python Access |
 |-------|-------|---------------|
-| `tenants` | Next.js | Read-only |
-| `tenant_config` | Next.js | None |
-| `tenant_buttons` | Next.js | None |
-| `subscriptions` | Next.js | None |
-| `credits` | Next.js | None |
-| `credit_transactions` | Next.js | None |
-| `sync_schedules` | Next.js | None |
-| `search_queries` | Next.js | None |
-| `button_clicks` | Next.js | None |
-| `leads` | Next.js | None |
-| `admin_users` | Next.js | None |
+| `Tenant` | Next.js / Prisma | Read-only (auth lookup) |
+| `Config`, `Button`, `Lead`, `Subscription`, `CreditTransaction`, `SearchClick`, `User`, `ApiUsageLog` (Prisma's own analytics), etc. | Next.js / Prisma | None |
 | **`content_pages`** | **Python** | **Read/Write** |
 | **`indexing_jobs`** | **Python** | **Read/Write** |
 | **`api_usage_logs`** | **Python** | **Read/Write** |
+
+> The Prisma side has its own `ApiUsageLog` table (for Next.js-recorded API hits). The Python side's `api_usage_logs` (snake_case) is a separate table living in the `heroiq_ai` database, used only for OpenAI cost tracking. Names are similar but the two tables are independent.
+
+---
+
+## 6. Migrations
+
+Schema changes on the Python side are managed by **Alembic** (`app/db/migrations/`). Configuration in `alembic.ini`. To create a new migration:
+
+```bash
+alembic revision --autogenerate -m "describe change"
+alembic upgrade head
+```
+
+Migrations run automatically on deploy via the App Platform build/run command pipeline. **Do not run Alembic against the `heroiq_app` database** — that database belongs to the Next.js Prisma schema and any Alembic activity there will conflict with Prisma's migration history.

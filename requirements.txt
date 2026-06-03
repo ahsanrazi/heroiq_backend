@@ -24,9 +24,6 @@ openai>=1.12.0
 # Tokenizer (for chunking)
 tiktoken>=0.6.0
 
-# Rate limiting
-slowapi>=0.1.9
-
 # Monitoring
 sentry-sdk[fastapi]>=1.40.0
 

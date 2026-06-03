@@ -12,6 +12,10 @@ class Settings(BaseSettings):
     # OpenAI
     OPENAI_API_KEY: str = ""
 
+    # Internal service-to-service auth — shared secret set to the SAME value on
+    # both this app and the Next.js app. Empty = fail closed (all calls rejected).
+    HEROIQ_INTERNAL_API_TOKEN: str = ""
+
     # App
     APP_VERSION: str = "1.0.0"
     DEBUG: bool = False
@@ -27,6 +31,14 @@ class Settings(BaseSettings):
 
     # Sentry
     SENTRY_DSN: str = ""
+
+    # CORS — comma-separated list of allowed browser origins.
+    # Empty (default) denies all cross-origin browser calls. Server-to-server callers are unaffected.
+    ALLOWED_ORIGINS: str = ""
+
+    @property
+    def allowed_origins_list(self) -> list[str]:
+        return [o.strip() for o in self.ALLOWED_ORIGINS.split(",") if o.strip()]
 
     model_config = {"env_file": ".env", "extra": "ignore"}
 

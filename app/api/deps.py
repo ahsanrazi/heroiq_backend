@@ -1,9 +1,11 @@
-from typing import Annotated
+import hmac
+from typing import Annotated, Optional
 
 from fastapi import Depends, Header, HTTPException
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.config import settings
 from app.db.session import get_session
 from app.models.tenant import Tenant
 
@@ -14,18 +16,49 @@ async def get_db():
         yield session
 
 
-async def get_current_tenant(
-    x_api_key: Annotated[str, Header()],
-    db: AsyncSession = Depends(get_db),
-) -> Tenant:
-    """Validate X-API-Key header against Tenant.serialKey (plaintext, matches
-    how Next.js validates the same key in /api/plugin/config?key=...). The
-    tenant must be ACTIVE — Prisma stores the TenantStatus enum as uppercase
-    text.
+async def require_service_token(
+    x_internal_token: Annotated[Optional[str], Header()] = None,
+) -> None:
+    """Authenticate the CALLER (Next.js), not the tenant.
+
+    Compares the X-Internal-Token header against the shared secret
+    HEROIQ_INTERNAL_API_TOKEN (same value configured on both the Next.js app
+    and this app). Constant-time comparison to avoid timing leaks.
+
+    Fail closed: a missing server-side secret, a missing header, or a mismatch
+    all reject. This is the single gate that says "only HeroIQ's own backend
+    may call these endpoints" — the tenant identity is carried separately as
+    data (X-Tenant-Id / path param).
     """
+    expected = settings.HEROIQ_INTERNAL_API_TOKEN
+    if not expected or not x_internal_token or not hmac.compare_digest(x_internal_token, expected):
+        raise HTTPException(
+            status_code=401,
+            detail={"error": {"code": "SERVICE_UNAUTHORIZED", "message": "Invalid service token."}},
+        )
+
+
+async def get_active_tenant_id(
+    x_tenant_id: Annotated[Optional[str], Header()] = None,
+    db: AsyncSession = Depends(get_db),
+) -> str:
+    """Resolve the tenant for a tenant-scoped call from the X-Tenant-Id header.
+
+    Authentication of the caller is handled separately by require_service_token
+    (applied at the router level). This dependency only confirms the asserted
+    tenant exists and is ACTIVE — defense-in-depth against a Next.js bug, and a
+    cheap indexed primary-key read. Status is the Prisma TenantStatus enum
+    stored as uppercase text.
+    """
+    if not x_tenant_id:
+        raise HTTPException(
+            status_code=400,
+            detail={"error": {"code": "MISSING_TENANT", "message": "X-Tenant-Id header is required."}},
+        )
+
     result = await db.execute(
         select(Tenant).where(
-            Tenant.serial_key == x_api_key,
+            Tenant.id == x_tenant_id,
             Tenant.status == "ACTIVE",
         )
     )
@@ -34,7 +67,7 @@ async def get_current_tenant(
     if not tenant:
         raise HTTPException(
             status_code=401,
-            detail={"error": {"code": "UNAUTHORIZED", "message": "Invalid or inactive API key."}},
+            detail={"error": {"code": "TENANT_INACTIVE", "message": "Unknown or inactive tenant."}},
         )
 
-    return tenant
+    return str(tenant.id)

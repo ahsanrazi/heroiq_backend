@@ -1,14 +1,17 @@
 # HeroIQ Python Backend — API Endpoints
 
-**Base URL:** `https://ai.heroiq.io/api`
+**Production Base URL:** `https://hammerhead-app-f9fjz.ondigitalocean.app/api`
+**Planned custom domain:** `https://ai.heroiq.io/api` (DNS not yet configured — switch when DNS is mapped)
 **Auth:** API key via `X-API-Key` header (except health check)
 **Total:** 7 endpoints across 3 categories
 
 **Common Headers:**
 ```
-X-API-Key: hiq_live_xxxxxxxxxxxxxxxxxxxx
+X-API-Key: <tenant serial key — 64-hex-char string or legacy HIQ-XXXXXX-XXXXXX>
 Content-Type: application/json
 ```
+
+> **Note on rate limits:** the "Rate Limit" values shown on individual endpoints below are **design intent only**. No rate-limit middleware is currently active in the code. SlowAPI is not installed, and the per-IP rate limiter that used to exist was removed in commit `8a14fe2`. OpenAI and Pinecone upstream limits apply naturally; everything else is unthrottled.
 
 ---
 
@@ -18,7 +21,7 @@ Content-Type: application/json
 
 Index or update a single page. Generates embeddings + GPT-4o-mini search card. Skips processing if content hash is unchanged.
 
-**Rate Limit:** 10 req/min per tenant
+**Rate Limit (design intent, not enforced):** 10 req/min per tenant.
 
 ```json
 // Request
@@ -55,7 +58,7 @@ Index or update a single page. Generates embeddings + GPT-4o-mini search card. S
 
 Accepts an array of pages and processes them in the background. Returns a `job_id` immediately for progress polling.
 
-**Rate Limit:** 10 req/min per tenant
+**Rate Limit (design intent, not enforced):** 10 req/min per tenant.
 
 ```json
 // Request
@@ -163,7 +166,7 @@ Deletes the entire Pinecone namespace for the tenant and removes all `content_pa
 
 Core endpoint. Called by Next.js after credit verification. Embeds the query and searches Pinecone — **no LLM call**, returns pre-built search cards from Pinecone metadata.
 
-**Rate Limit:** 60 req/min per tenant
+**Rate Limit (design intent, not enforced):** 60 req/min per tenant.
 
 ```json
 // Request
@@ -288,6 +291,6 @@ All errors follow this format:
 | 400 | Bad Request | Validation error (missing fields, invalid data) |
 | 401 | Unauthorized | Missing or invalid API key |
 | 404 | Not Found | Resource doesn't exist (page, job, tenant) |
-| 429 | Too Many Requests | Rate limited |
+| 429 | Too Many Requests | Rate limited — reserved for the future; not currently returned by Python (no rate-limit middleware is active). |
 | 500 | Internal Server Error | Server error |
 | 503 | Service Unavailable | External service down (Pinecone, OpenAI) |

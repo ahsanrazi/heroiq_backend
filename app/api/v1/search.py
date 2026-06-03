@@ -1,13 +1,9 @@
 import time
 
-from fastapi import APIRouter, Depends, Request
+from fastapi import APIRouter, Depends
 from sqlalchemy.ext.asyncio import AsyncSession
-from slowapi import Limiter
-from slowapi.util import get_remote_address
 
-from app.api.deps import get_current_tenant, get_db
-from app.core.rate_limiter import limiter
-from app.models.tenant import Tenant
+from app.api.deps import get_active_tenant_id, get_db
 from app.schemas.search import SearchRequest, SearchResponse
 from app.services.search_service import search_pages
 
@@ -15,11 +11,9 @@ router = APIRouter()
 
 
 @router.post("/search", response_model=SearchResponse)
-@limiter.limit("60/minute")
 async def ai_search(
-    request: Request,
     body: SearchRequest,
-    tenant: Tenant = Depends(get_current_tenant),
+    tenant_id: str = Depends(get_active_tenant_id),
     db: AsyncSession = Depends(get_db),
 ):
     """AI search — embed query, search Pinecone, return pre-built search cards. No LLM call."""
@@ -27,7 +21,7 @@ async def ai_search(
 
     results = await search_pages(
         query=body.query,
-        tenant_id=str(tenant.id),
+        tenant_id=tenant_id,
         limit=body.limit,
         db=db,
     )
