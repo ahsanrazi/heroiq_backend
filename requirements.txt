@@ -24,6 +24,9 @@ openai>=1.12.0
 # Tokenizer (for chunking)
 tiktoken>=0.6.0
 
+# Job queue (background indexing worker) — pulls in redis client
+arq>=0.26.0
+
 # Monitoring
 sentry-sdk[fastapi]>=1.40.0
 

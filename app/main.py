@@ -15,7 +15,10 @@ async def lifespan(app: FastAPI):
     if settings.SENTRY_DSN:
         sentry_sdk.init(dsn=settings.SENTRY_DSN, traces_sample_rate=0.1)
     yield
-    # Shutdown: cleanup if needed
+    # Shutdown: close the Arq enqueue pool if it was opened
+    from app.queue import close_redis_pool
+
+    await close_redis_pool()
 
 
 app = FastAPI(

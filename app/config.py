@@ -12,6 +12,15 @@ class Settings(BaseSettings):
     # OpenAI
     OPENAI_API_KEY: str = ""
 
+    # Redis (Arq job queue broker). Local default; in production use the DO
+    # Managed Valkey TLS string, e.g. rediss://default:<pwd>@host:25061
+    REDIS_URL: str = "redis://localhost:6379"
+
+    # Worker tuning (only read by the Arq worker process, not the web service)
+    WORKER_MAX_JOBS: int = 2        # max bulk jobs processed concurrently per worker
+    WORKER_JOB_TIMEOUT: int = 1800  # seconds before a single bulk job is abandoned
+    STALE_JOB_MINUTES: int = 30     # processing jobs older than this are swept to failed on startup
+
     # Internal service-to-service auth — shared secret set to the SAME value on
     # both this app and the Next.js app. Empty = fail closed (all calls rejected).
     HEROIQ_INTERNAL_API_TOKEN: str = ""

@@ -1,4 +1,4 @@
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_active_tenant_id, get_db
@@ -40,16 +40,14 @@ async def index_page(
 @router.post("/index/bulk", response_model=BulkIndexResponse, status_code=202)
 async def bulk_index(
     body: BulkIndexRequest,
-    background_tasks: BackgroundTasks,
     tenant_id: str = Depends(get_active_tenant_id),
     db: AsyncSession = Depends(get_db),
 ):
-    """Accept pages array, return job_id immediately, process in background."""
+    """Accept pages array, enqueue to the worker, return job_id immediately."""
     job = await process_bulk_index(
         pages=body.pages,
         tenant_id=tenant_id,
         db=db,
-        background_tasks=background_tasks,
     )
     return job
 

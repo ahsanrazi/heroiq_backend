@@ -2,7 +2,6 @@ import hashlib
 import logging
 from datetime import datetime
 
-from fastapi import BackgroundTasks
 from sqlalchemy import select, delete
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -10,6 +9,7 @@ from app.db.session import async_session_factory
 from app.models.api_usage_log import ApiUsageLog
 from app.models.content_page import ContentPage
 from app.models.indexing_job import IndexingJob
+from app.queue import BULK_INDEX_TASK, get_redis_pool
 from app.schemas.index import (
     BulkIndexResponse,
     DeletePageResponse,
@@ -173,9 +173,31 @@ async def process_bulk_index(
     pages: list[IndexPageRequest],
     tenant_id: str,
     db: AsyncSession,
-    background_tasks: BackgroundTasks,
 ) -> BulkIndexResponse:
-    """Create indexing job, kick off background processing, return job_id immediately."""
+    """Create indexing job, enqueue it to the Arq worker, return job_id immediately.
+
+    Single-flight per tenant: if a bulk job for this tenant is already queued or
+    processing, return that job instead of creating/enqueuing a duplicate. This
+    keeps only one bulk run active per tenant at a time, which also prevents the
+    concurrent delete-then-upsert race in index_single_page.
+    """
+    existing = await db.execute(
+        select(IndexingJob)
+        .where(
+            IndexingJob.tenant_id == tenant_id,
+            IndexingJob.status.in_(["queued", "processing"]),
+        )
+        .order_by(IndexingJob.started_at.desc())
+        .limit(1)
+    )
+    active = existing.scalar_one_or_none()
+    if active:
+        return BulkIndexResponse(
+            job_id=str(active.id),
+            status=active.status,
+            total_pages=active.total_pages,
+        )
+
     job = IndexingJob(
         tenant_id=tenant_id,
         status="queued",
@@ -187,8 +209,14 @@ async def process_bulk_index(
 
     job_id = str(job.id)
 
-    # Process in background
-    background_tasks.add_task(_run_bulk_index, job_id, tenant_id, pages)
+    # Hand off to the Arq worker process (separate from the web service).
+    redis = await get_redis_pool()
+    await redis.enqueue_job(
+        BULK_INDEX_TASK,
+        job_id,
+        tenant_id,
+        [p.model_dump() for p in pages],
+    )
 
     return BulkIndexResponse(
         job_id=job_id,
@@ -197,67 +225,90 @@ async def process_bulk_index(
     )
 
 
-async def _run_bulk_index(
+async def run_bulk_index_job(
     job_id: str,
     tenant_id: str,
     pages: list[IndexPageRequest],
 ):
-    """Background task: process all pages one by one, detect deletions, update job progress."""
+    """Worker task: process all pages one by one, detect deletions, update job progress.
+
+    Runs in the Arq worker process. Wrapped so any unhandled error marks the job
+    'failed' (instead of leaving it stuck 'processing' forever).
+    """
     async with async_session_factory() as db:
-        # Update job status to processing
         result = await db.execute(select(IndexingJob).where(IndexingJob.id == job_id))
         job = result.scalar_one()
+
+        # started_at is DB-defaulted at row creation; reset it to the real
+        # processing-start so get_job_status() duration excludes queue wait.
         job.status = "processing"
+        job.started_at = datetime.utcnow()
         await db.commit()
 
-        # Track incoming page IDs for deletion detection
-        incoming_post_ids = {p.wp_post_id for p in pages}
+        try:
+            # Track incoming page IDs for deletion detection
+            incoming_post_ids = {p.wp_post_id for p in pages}
 
-        for page_data in pages:
-            try:
-                response = await index_single_page(
-                    page_data=page_data,
-                    tenant_id=tenant_id,
-                    db=db,
-                )
+            for page_data in pages:
+                try:
+                    response = await index_single_page(
+                        page_data=page_data,
+                        tenant_id=tenant_id,
+                        db=db,
+                    )
 
-                await db.refresh(job)
+                    await db.refresh(job)
 
-                if response.status == "indexed":
-                    job.pages_indexed += 1
-                elif response.status == "skipped":
-                    job.pages_skipped += 1
+                    if response.status == "indexed":
+                        job.pages_indexed += 1
+                    elif response.status == "skipped":
+                        job.pages_skipped += 1
 
-            except Exception as e:
-                logger.error(f"Bulk index error for page {page_data.wp_post_id}: {e}")
-                await db.refresh(job)
-                job.pages_failed += 1
-                errors = job.errors or []
-                errors.append({"wp_post_id": page_data.wp_post_id, "error": str(e)})
-                job.errors = errors
+                except Exception as e:
+                    logger.error(f"Bulk index error for page {page_data.wp_post_id}: {e}")
+                    await db.refresh(job)
+                    job.pages_failed += 1
+                    errors = job.errors or []
+                    errors.append({"wp_post_id": page_data.wp_post_id, "error": str(e)})
+                    job.errors = errors
+
+                await db.commit()
+
+            # Deletion detection: remove pages NOT in incoming list
+            result = await db.execute(
+                select(ContentPage).where(ContentPage.tenant_id == tenant_id)
+            )
+            all_indexed = result.scalars().all()
+
+            for page in all_indexed:
+                if page.wp_post_id not in incoming_post_ids:
+                    logger.info(f"Deleting removed page {page.wp_post_id} for tenant {tenant_id}")
+                    if page.chunk_count:
+                        await delete_vectors_by_page(tenant_id, page.wp_post_id, page.chunk_count)
+                    await db.delete(page)
 
             await db.commit()
 
-        # Deletion detection: remove pages NOT in incoming list
-        result = await db.execute(
-            select(ContentPage).where(ContentPage.tenant_id == tenant_id)
-        )
-        all_indexed = result.scalars().all()
+            # Mark job completed
+            await db.refresh(job)
+            job.status = "completed"
+            job.completed_at = datetime.utcnow()
+            await db.commit()
 
-        for page in all_indexed:
-            if page.wp_post_id not in incoming_post_ids:
-                logger.info(f"Deleting removed page {page.wp_post_id} for tenant {tenant_id}")
-                if page.chunk_count:
-                    await delete_vectors_by_page(tenant_id, page.wp_post_id, page.chunk_count)
-                await db.delete(page)
-
-        await db.commit()
-
-        # Mark job completed
-        await db.refresh(job)
-        job.status = "completed"
-        job.completed_at = datetime.utcnow()
-        await db.commit()
+        except Exception as e:
+            # Unhandled failure (e.g. Pinecone/OpenAI outage, DB error): mark the
+            # job failed so the dashboard/plugin stops polling a dead job. Arq
+            # will retry the task up to max_tries.
+            logger.exception(f"Bulk index job {job_id} failed: {e}")
+            await db.rollback()
+            fail = (await db.execute(select(IndexingJob).where(IndexingJob.id == job_id))).scalar_one()
+            fail.status = "failed"
+            fail.completed_at = datetime.utcnow()
+            errors = fail.errors or []
+            errors.append({"job_error": str(e)})
+            fail.errors = errors
+            await db.commit()
+            raise
 
 
 async def get_job_status(job_id: str, tenant_id: str, db: AsyncSession) -> JobStatusResponse | None:
