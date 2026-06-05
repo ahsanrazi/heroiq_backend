@@ -4,6 +4,8 @@ import logging
 from openai import AsyncOpenAI
 
 from app.config import settings
+from app.core.exceptions import ServiceUnavailableError
+from app.core.retry import OPENAI_RETRYABLE, openai_retry
 
 logger = logging.getLogger(__name__)
 
@@ -20,11 +22,10 @@ Respond ONLY with valid JSON, no markdown or explanation:
 {"display_title": "...", "summary": "...", "recommended_cta": "..."}"""
 
 
-async def generate_search_card(title: str, content: str) -> dict:
-    """Generate display_title, summary, and recommended_cta using GPT-4o-mini.
-    Called ONCE per page during indexing — NOT at query time.
-    """
-    response = await client.chat.completions.create(
+@openai_retry
+async def _create_search_card(title: str, content: str):
+    """Raw chat-completion call, retried on transient OpenAI errors."""
+    return await client.chat.completions.create(
         model=LLM_MODEL,
         messages=[
             {"role": "system", "content": SEARCH_CARD_PROMPT},
@@ -34,6 +35,17 @@ async def generate_search_card(title: str, content: str) -> dict:
         max_tokens=200,
         timeout=10,
     )
+
+
+async def generate_search_card(title: str, content: str) -> dict:
+    """Generate display_title, summary, and recommended_cta using GPT-4o-mini.
+    Called ONCE per page during indexing — NOT at query time.
+    """
+    try:
+        response = await _create_search_card(title, content)
+    except OPENAI_RETRYABLE as e:
+        logger.error(f"OpenAI search-card generation failed after retries: {e}")
+        raise ServiceUnavailableError("OpenAI") from e
 
     raw = response.choices[0].message.content.strip()
 

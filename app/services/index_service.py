@@ -73,9 +73,11 @@ async def index_single_page(
             reason="content_unchanged",
         )
 
-    # If re-indexing, delete old vectors first (handles chunk count changes)
-    if existing and existing.chunk_count:
-        await delete_vectors_by_page(tenant_id, page_data.wp_post_id, existing.chunk_count)
+    # If re-indexing, delete old vectors first (handles chunk count changes).
+    # Deletion is by ID-prefix, so it covers the real vectors regardless of the
+    # stored chunk_count and is a cheap no-op when the page had none.
+    if existing:
+        await delete_vectors_by_page(tenant_id, page_data.wp_post_id)
 
     # Chunk content
     chunks = chunk_text(page_data.content)
@@ -291,8 +293,7 @@ async def run_bulk_index_job(
             for page in all_indexed:
                 if page.wp_post_id not in incoming_post_ids:
                     logger.info(f"Deleting removed page {page.wp_post_id} for tenant {tenant_id}")
-                    if page.chunk_count:
-                        await delete_vectors_by_page(tenant_id, page.wp_post_id, page.chunk_count)
+                    await delete_vectors_by_page(tenant_id, page.wp_post_id)
                     await db.delete(page)
 
             await db.commit()
@@ -359,10 +360,9 @@ async def delete_page_index(wp_post_id: int, tenant_id: str, db: AsyncSession) -
     if not page:
         return None
 
-    chunks_removed = page.chunk_count or 0
-
-    # Delete from Pinecone
-    await delete_vectors_by_page(tenant_id, wp_post_id, chunks_removed)
+    # Delete from Pinecone by ID-prefix; returns the real number of vectors
+    # removed (not the possibly-stale chunk_count on the row).
+    chunks_removed = await delete_vectors_by_page(tenant_id, wp_post_id)
 
     # Delete from DB
     await db.delete(page)
@@ -384,10 +384,22 @@ async def delete_tenant_index(tenant_id: str, db: AsyncSession) -> DeleteTenantR
     pages = result.scalars().all()
     pages_removed = len(pages)
 
-    # Delete Pinecone namespace
-    await delete_namespace(tenant_id)
+    # Delete Pinecone namespace. Tolerate an already-empty/nonexistent namespace
+    # (idempotent) and any other Pinecone error — re-running a tenant wipe is
+    # safe (delete_all again), so orphan vectors are recoverable, but orphan DB
+    # rows are not worth keeping. So we always proceed to the DB delete below.
+    namespace_ok = True
+    try:
+        await delete_namespace(tenant_id)
+    except Exception as e:
+        msg = str(e).lower()
+        if "not found" in msg or "404" in msg:
+            logger.info(f"Namespace for tenant {tenant_id} already absent — treating as deleted.")
+        else:
+            namespace_ok = False
+            logger.error(f"Pinecone namespace delete failed for tenant {tenant_id}: {e}")
 
-    # Delete all content_pages for tenant
+    # Delete all content_pages for tenant (regardless of the Pinecone outcome)
     await db.execute(
         delete(ContentPage).where(ContentPage.tenant_id == tenant_id)
     )
@@ -396,7 +408,7 @@ async def delete_tenant_index(tenant_id: str, db: AsyncSession) -> DeleteTenantR
     namespace = f"tenant_{tenant_id}"
 
     return DeleteTenantResponse(
-        success=True,
+        success=namespace_ok,
         tenant_id=tenant_id,
         pages_removed=pages_removed,
         namespace_deleted=namespace,

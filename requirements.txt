@@ -21,6 +21,9 @@ pinecone>=5.0.0
 # OpenAI (embeddings + LLM)
 openai>=1.12.0
 
+# Retry with exponential backoff for transient OpenAI/Pinecone failures
+tenacity>=8.2.0
+
 # Tokenizer (for chunking)
 tiktoken>=0.6.0
 

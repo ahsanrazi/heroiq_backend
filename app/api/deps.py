@@ -1,5 +1,5 @@
 import hmac
-from typing import Annotated, Optional
+from typing import Annotated, Callable, Optional
 
 from fastapi import Depends, Header, HTTPException
 from sqlalchemy import select
@@ -8,6 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.config import settings
 from app.db.session import get_session
 from app.models.tenant import Tenant
+from app.services.rate_limiter import check_rate_limit
 
 
 async def get_db():
@@ -71,3 +72,21 @@ async def get_active_tenant_id(
         )
 
     return str(tenant.id)
+
+
+def rate_limited(category: str) -> Callable:
+    """Build a dependency that enforces the per-tenant rate limit for a category.
+
+    Resolves the tenant first (reusing get_active_tenant_id — FastAPI caches it
+    per-request so the tenant lookup runs once), then consumes one token from
+    the tenant's bucket. Returns the tenant_id so endpoints keep the same
+    `tenant_id: str = Depends(...)` shape. Raises 429 when the bucket is empty.
+
+    Categories: "search", "index", "bulk" (see Settings.RL_* limits).
+    """
+
+    async def _dep(tenant_id: str = Depends(get_active_tenant_id)) -> str:
+        await check_rate_limit(tenant_id, category)
+        return tenant_id
+
+    return _dep

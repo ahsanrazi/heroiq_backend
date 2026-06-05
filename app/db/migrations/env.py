@@ -15,9 +15,13 @@ config = context.config
 if config.config_file_name is not None:
     fileConfig(config.config_file_name)
 
+# Migrations run DDL and must use a DIRECT connection, never a PgBouncer
+# transaction pooler. Prefer DIRECT_URL; fall back to DATABASE_URL (local dev,
+# where it's already direct). Strip the async driver — Alembic runs sync.
+migration_url = settings.DIRECT_URL or settings.DATABASE_URL
 config.set_main_option(
     "sqlalchemy.url",
-    settings.DATABASE_URL.replace("+asyncpg", ""),
+    migration_url.replace("+asyncpg", ""),
 )
 
 target_metadata = Base.metadata

@@ -5,6 +5,8 @@ from functools import partial
 from pinecone import Pinecone
 
 from app.config import settings
+from app.core.exceptions import ServiceUnavailableError
+from app.core.retry import PINECONE_RETRYABLE, pinecone_retry
 
 logger = logging.getLogger(__name__)
 
@@ -30,8 +32,24 @@ def get_namespace(tenant_id: str) -> str:
 
 async def _run_sync(func, *args, **kwargs):
     """Run a synchronous Pinecone call in the thread pool to avoid blocking the event loop."""
-    loop = asyncio.get_event_loop()
+    loop = asyncio.get_running_loop()
     return await loop.run_in_executor(None, partial(func, *args, **kwargs))
+
+
+@pinecone_retry
+async def _run_sync_retry(func, *args, **kwargs):
+    """_run_sync with retries on transient Pinecone errors."""
+    return await _run_sync(func, *args, **kwargs)
+
+
+async def _pinecone_call(func, *args, **kwargs):
+    """Run a Pinecone op with retries; surface exhausted failures as a 503
+    rather than letting the raw SDK error leak out as an HTTP 500."""
+    try:
+        return await _run_sync_retry(func, *args, **kwargs)
+    except PINECONE_RETRYABLE as e:
+        logger.error(f"Pinecone call failed after retries: {e}")
+        raise ServiceUnavailableError("Search index") from e
 
 
 async def upsert_vectors(
@@ -41,7 +59,7 @@ async def upsert_vectors(
     """Upsert vectors into the tenant's Pinecone namespace."""
     index = _get_index()
     namespace = get_namespace(tenant_id)
-    await _run_sync(index.upsert, vectors=vectors, namespace=namespace)
+    await _pinecone_call(index.upsert, vectors=vectors, namespace=namespace)
 
 
 async def query_vectors(
@@ -53,7 +71,7 @@ async def query_vectors(
     index = _get_index()
     namespace = get_namespace(tenant_id)
 
-    results = await _run_sync(
+    results = await _pinecone_call(
         index.query,
         vector=query_embedding,
         top_k=top_k,
@@ -71,20 +89,46 @@ async def query_vectors(
     ]
 
 
-async def delete_vectors_by_page(tenant_id: str, wp_post_id: int, chunk_count: int):
-    """Delete all chunk vectors for a specific page."""
+def _delete_by_prefix(index, prefix: str, namespace: str) -> int:
+    """List every vector ID sharing `prefix` in the namespace and delete them.
+
+    Runs synchronously (called via _run_sync) so the paginated list() generator
+    and the batched deletes happen in one thread-pool job. Returns the count
+    actually removed.
+    """
+    ids: list[str] = []
+    for id_batch in index.list(prefix=prefix, namespace=namespace):
+        ids.extend(id_batch)
+
+    if not ids:
+        return 0
+
+    # Pinecone caps a delete-by-ids call at 1000 IDs.
+    for start in range(0, len(ids), 1000):
+        index.delete(ids=ids[start:start + 1000], namespace=namespace)
+    return len(ids)
+
+
+async def delete_vectors_by_page(tenant_id: str, wp_post_id: int) -> int:
+    """Delete all chunk vectors for a page by discovering their real IDs.
+
+    Serverless indexes don't support delete-by-metadata-filter, and the DB's
+    chunk_count can drift, so we enumerate the actual vector IDs by their shared
+    prefix `page_{wp_post_id}_chunk_` and delete those. The trailing `_chunk_`
+    keeps `page_1_` from matching `page_10_`. Returns the number of vectors
+    removed (0 if the page had none).
+    """
     index = _get_index()
     namespace = get_namespace(tenant_id)
-
-    ids = [f"page_{wp_post_id}_chunk_{i}" for i in range(chunk_count)]
-    await _run_sync(index.delete, ids=ids, namespace=namespace)
+    prefix = f"page_{wp_post_id}_chunk_"
+    return await _pinecone_call(_delete_by_prefix, index, prefix, namespace)
 
 
 async def delete_namespace(tenant_id: str):
     """Delete the entire Pinecone namespace for a tenant."""
     index = _get_index()
     namespace = get_namespace(tenant_id)
-    await _run_sync(index.delete, delete_all=True, namespace=namespace)
+    await _pinecone_call(index.delete, delete_all=True, namespace=namespace)
 
 
 async def check_pinecone_health() -> str:

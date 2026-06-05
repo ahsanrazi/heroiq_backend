@@ -1,7 +1,7 @@
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.deps import get_active_tenant_id, get_db
+from app.api.deps import get_active_tenant_id, get_db, rate_limited
 from app.schemas.index import (
     BulkIndexRequest,
     BulkIndexResponse,
@@ -25,7 +25,7 @@ router = APIRouter()
 @router.post("/index", response_model=IndexPageResponse)
 async def index_page(
     body: IndexPageRequest,
-    tenant_id: str = Depends(get_active_tenant_id),
+    tenant_id: str = Depends(rate_limited("index")),
     db: AsyncSession = Depends(get_db),
 ):
     """Index or update a single page. Skips if content hash unchanged."""
@@ -40,7 +40,7 @@ async def index_page(
 @router.post("/index/bulk", response_model=BulkIndexResponse, status_code=202)
 async def bulk_index(
     body: BulkIndexRequest,
-    tenant_id: str = Depends(get_active_tenant_id),
+    tenant_id: str = Depends(rate_limited("bulk")),
     db: AsyncSession = Depends(get_db),
 ):
     """Accept pages array, enqueue to the worker, return job_id immediately."""

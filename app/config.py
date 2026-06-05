@@ -4,6 +4,15 @@ from pydantic_settings import BaseSettings
 class Settings(BaseSettings):
     # Database
     DATABASE_URL: str = "postgresql+asyncpg://heroiq:heroiq_password@localhost:5432/heroiq"
+    # Direct (non-pooler) URL used ONLY for Alembic migrations. DDL must not run
+    # through a PgBouncer transaction pooler. Empty → fall back to DATABASE_URL
+    # (correct for local dev, where DATABASE_URL is already a direct connection).
+    DIRECT_URL: str = ""
+    # SQLAlchemy connection pool, per process. Each gunicorn/Arq worker holds its
+    # own pool, so real Postgres usage = (web workers + arq) × (size + overflow)
+    # UNLESS a PgBouncer pooler fronts the DB (then the pooler's size is the cap).
+    DB_POOL_SIZE: int = 5
+    DB_MAX_OVERFLOW: int = 5
 
     # Pinecone
     PINECONE_API_KEY: str = ""
@@ -37,6 +46,33 @@ class Settings(BaseSettings):
     # Search
     SEARCH_TOP_K: int = 5
     SEARCH_RESULTS_LIMIT: int = 3
+
+    # External-call retry (OpenAI + Pinecone). Transient errors (timeouts,
+    # connection drops, 5xx, rate-limit) are retried with exponential backoff;
+    # after these run out the call surfaces as a 503, not a 500. See
+    # app/core/retry.py.
+    EXTERNAL_RETRY_ATTEMPTS: int = 3
+    EXTERNAL_RETRY_BACKOFF_MULTIPLIER: float = 0.5
+    EXTERNAL_RETRY_BACKOFF_MAX: float = 8.0
+
+    # Rate limiting (per-tenant safety net behind Next.js). Next.js does the
+    # primary per-IP + per-tenant limiting in the widget proxy; this is a
+    # defense-in-depth backstop that only trips on a runaway / compromised
+    # caller (leaked service token, retry loop). Limits sit ABOVE the Next.js
+    # per-tenant ceilings so normal traffic never trips them.
+    #   - Token bucket per (tenant, category). Sustained rate = PER_MIN/60 per
+    #     second, with BURST capacity for short spikes.
+    #   - Keyed on X-Tenant-Id only (Python sees the Next.js server IP, so
+    #     per-IP keying is meaningless server-to-server).
+    RATE_LIMIT_ENABLED: bool = True
+    RATE_LIMIT_FAIL_OPEN: bool = True   # Redis error => allow (availability > strictness)
+    RL_SEARCH_PER_MIN: int = 1200       # Next.js per-tenant search is 1000/min
+    RL_SEARCH_BURST: int = 60
+    RL_INDEX_PER_MIN: int = 120         # single-page save_post path
+    RL_INDEX_BURST: int = 30
+    RL_BULK_PER_MIN: int = 20           # full re-sync enqueues; a few/day is normal
+    RL_BULK_BURST: int = 5
+    RATE_LIMIT_KEY_PREFIX: str = "rl"   # isolates limiter keys from Arq's keys
 
     # Sentry
     SENTRY_DSN: str = ""
