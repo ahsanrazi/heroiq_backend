@@ -98,7 +98,11 @@ def _delete_by_prefix(index, prefix: str, namespace: str) -> int:
     """
     ids: list[str] = []
     for id_batch in index.list(prefix=prefix, namespace=namespace):
-        ids.extend(id_batch)
+        for item in id_batch:
+            # Newer Pinecone SDK (>=6) yields ListItem objects exposing .id;
+            # older versions yield plain string IDs. Normalize to strings so the
+            # delete payload stays JSON-serializable.
+            ids.append(item.id if hasattr(item, "id") else item)
 
     if not ids:
         return 0

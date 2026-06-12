@@ -1,0 +1,281 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>How HeroIQ Search Works</title>
+<style>
+  * { box-sizing: border-box; }
+  html, body {
+    margin: 0; padding: 0;
+    background: #ffffff;
+    color: #111827;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Inter", Roboto, sans-serif;
+    -webkit-font-smoothing: antialiased;
+  }
+  .page { max-width: 1120px; margin: 0 auto; padding: 56px 28px 72px; }
+
+  header.title { text-align: center; margin-bottom: 40px; }
+  header.title h1 { margin: 0 0 12px 0; font-size: 34px; font-weight: 800; letter-spacing: -0.5px; }
+  header.title .sub { color: #4b5563; font-size: 17px; max-width: 720px; margin: 0 auto; line-height: 1.5; }
+
+  .lane {
+    border-radius: 18px;
+    padding: 26px 28px 30px;
+    margin-bottom: 26px;
+  }
+  .lane.search  { background: #f0fdf6; border: 1.5px solid #bbf7d0; }
+  .lane.index   { background: #f1f2ff; border: 1.5px solid #c7cbff; }
+
+  .lane-head { display: flex; align-items: center; gap: 12px; margin-bottom: 22px; }
+  .lane-badge {
+    font-size: 13px; font-weight: 700; letter-spacing: 0.5px; text-transform: uppercase;
+    padding: 5px 12px; border-radius: 999px; color: #fff;
+  }
+  .lane.search .lane-badge { background: #16a34a; }
+  .lane.index  .lane-badge { background: #4f46e5; }
+  .lane-head h2 { margin: 0; font-size: 21px; font-weight: 700; }
+  .lane-head .tag { margin-left: auto; font-size: 14px; font-weight: 600; }
+  .lane.search .tag { color: #15803d; }
+  .lane.index  .tag { color: #4338ca; }
+
+  .flow { display: flex; align-items: stretch; justify-content: center; gap: 10px; flex-wrap: nowrap; }
+  .node {
+    background: #fff;
+    border-radius: 14px;
+    border: 1.5px solid #e5e7eb;
+    padding: 16px 16px 18px;
+    flex: 1 1 0;
+    min-width: 0;
+    text-align: center;
+    display: flex; flex-direction: column; align-items: center;
+    box-shadow: 0 1px 2px rgba(0,0,0,0.04);
+  }
+  .node.hero-search { border-color: #16a34a; box-shadow: 0 4px 14px rgba(22,163,74,0.14); }
+  .node.hero-index  { border-color: #4f46e5; box-shadow: 0 4px 14px rgba(79,70,229,0.14); }
+  .node .ico { width: 46px; height: 46px; margin-bottom: 10px; }
+  .node .nm  { font-size: 15.5px; font-weight: 700; line-height: 1.25; }
+  .node .ds  { font-size: 13px; color: #6b7280; margin-top: 5px; line-height: 1.35; }
+
+  .arrow { display: flex; align-items: center; color: #9ca3af; font-size: 26px; flex: 0 0 auto; }
+
+  .lane-note { margin: 18px 2px 0; font-size: 13.5px; color: #6b7280; text-align: center; }
+  .lane.search .lane-note b { color: #15803d; }
+  .lane.index  .lane-note b { color: #4338ca; }
+
+  .helpers { margin-top: 38px; }
+  .helpers h3 { text-align: center; font-size: 15px; font-weight: 700; color: #6b7280; letter-spacing: 0.6px; text-transform: uppercase; margin: 0 0 16px; }
+  .chips { display: flex; gap: 16px; justify-content: center; flex-wrap: wrap; }
+  .chip {
+    background: #fafafa; border: 1.5px solid #e5e7eb; border-radius: 14px;
+    padding: 16px 20px; text-align: center; min-width: 220px; flex: 1 1 220px; max-width: 300px;
+    display: flex; flex-direction: column; align-items: center;
+  }
+  .chip .ico { width: 40px; height: 40px; margin-bottom: 8px; }
+  .chip .nm { font-size: 15px; font-weight: 700; }
+  .chip .ds { font-size: 12.5px; color: #6b7280; margin-top: 3px; }
+
+  footer.why {
+    margin-top: 44px; padding-top: 26px; border-top: 1px solid #e5e7eb;
+  }
+  footer.why h3 { text-align: center; font-size: 15px; font-weight: 700; color: #6b7280; letter-spacing: 0.6px; text-transform: uppercase; margin: 0 0 18px; }
+  .why-grid { display: flex; gap: 18px; flex-wrap: wrap; justify-content: center; }
+  .why-item { flex: 1 1 230px; max-width: 250px; display: flex; gap: 11px; align-items: flex-start; }
+  .why-item .dot { flex: 0 0 auto; width: 22px; height: 22px; border-radius: 50%; background: #dcfce7; color: #15803d; display: flex; align-items: center; justify-content: center; font-weight: 800; font-size: 13px; margin-top: 1px; }
+  .why-item p { margin: 0; font-size: 14px; color: #374151; line-height: 1.45; }
+  .why-item p b { color: #111827; }
+
+  @media (max-width: 760px) {
+    .flow { flex-wrap: wrap; }
+    .arrow { transform: rotate(90deg); }
+    .node { flex-basis: 100%; }
+  }
+</style>
+</head>
+<body>
+
+<div class="page">
+
+<header class="title">
+  <h1>How HeroIQ Search Works</h1>
+  <div class="sub">Two specialised workers run side by side — one <b>answers searches instantly</b>, the other <b>prepares your content in the background</b> — so searches stay fast even while thousands of pages are being indexed.</div>
+</header>
+
+
+<!-- ============== LANE 1: SEARCHING ============== -->
+<div class="lane search">
+  <div class="lane-head">
+    <span class="lane-badge">Worker 1</span>
+    <h2>Answering a search</h2>
+    <span class="tag">⚡ about half a second</span>
+  </div>
+
+  <div class="flow">
+    <div class="node">
+      <svg class="ico" viewBox="0 0 48 48">
+        <circle cx="24" cy="16" r="9" fill="#fef3c7" stroke="#b45309" stroke-width="2.5"/>
+        <path d="M9 40 a15 13 0 0 1 30 0" fill="#fef3c7" stroke="#b45309" stroke-width="2.5"/>
+      </svg>
+      <div class="nm">Visitor asks</div>
+      <div class="ds">“Do you offer root&nbsp;canals?”</div>
+    </div>
+
+    <div class="arrow">→</div>
+
+    <div class="node hero-search">
+      <svg class="ico" viewBox="0 0 48 48">
+        <circle cx="21" cy="21" r="13" fill="#dcfce7" stroke="#15803d" stroke-width="3"/>
+        <line x1="31" y1="31" x2="42" y2="42" stroke="#15803d" stroke-width="4" stroke-linecap="round"/>
+      </svg>
+      <div class="nm">Search Worker</div>
+      <div class="ds">Finds the best matching pages</div>
+    </div>
+
+    <div class="arrow">→</div>
+
+    <div class="node">
+      <svg class="ico" viewBox="0 0 48 48">
+        <rect x="7" y="9" width="34" height="30" rx="4" fill="#fff" stroke="#15803d" stroke-width="2.5"/>
+        <line x1="12" y1="18" x2="30" y2="18" stroke="#16a34a" stroke-width="3" stroke-linecap="round"/>
+        <line x1="12" y1="25" x2="36" y2="25" stroke="#cbd5e1" stroke-width="2.5" stroke-linecap="round"/>
+        <line x1="12" y1="31" x2="28" y2="31" stroke="#cbd5e1" stroke-width="2.5" stroke-linecap="round"/>
+      </svg>
+      <div class="nm">Instant answer</div>
+      <div class="ds">Ranked results in the widget</div>
+    </div>
+  </div>
+
+  <p class="lane-note">Uses the <b>AI</b> understanding and <b>Search Index</b> that Worker&nbsp;2 has already prepared — so there’s nothing heavy to do at search time.</p>
+</div>
+
+
+<!-- ============== LANE 2: INDEXING ============== -->
+<div class="lane index">
+  <div class="lane-head">
+    <span class="lane-badge">Worker 2</span>
+    <h2>Preparing your content</h2>
+    <span class="tag">🌙 runs in the background</span>
+  </div>
+
+  <div class="flow">
+    <div class="node">
+      <svg class="ico" viewBox="0 0 48 48">
+        <rect x="14" y="6"  width="26" height="32" rx="3" fill="#fde68a" stroke="#b45309" stroke-width="2.2"/>
+        <rect x="8"  y="11" width="26" height="32" rx="3" fill="#fff" stroke="#b45309" stroke-width="2.2"/>
+        <line x1="13" y1="20" x2="29" y2="20" stroke="#94a3b8" stroke-width="2.2" stroke-linecap="round"/>
+        <line x1="13" y1="27" x2="29" y2="27" stroke="#cbd5e1" stroke-width="2.2" stroke-linecap="round"/>
+        <line x1="13" y1="34" x2="24" y2="34" stroke="#cbd5e1" stroke-width="2.2" stroke-linecap="round"/>
+      </svg>
+      <div class="nm">Your website pages</div>
+      <div class="ds">Posts, pages, services…</div>
+    </div>
+
+    <div class="arrow">→</div>
+
+    <div class="node">
+      <svg class="ico" viewBox="0 0 48 48">
+        <rect x="9" y="11" width="30" height="7" rx="2" fill="#e0e7ff" stroke="#4338ca" stroke-width="2"/>
+        <rect x="9" y="21" width="30" height="7" rx="2" fill="#c7d2fe" stroke="#4338ca" stroke-width="2"/>
+        <rect x="9" y="31" width="30" height="7" rx="2" fill="#e0e7ff" stroke="#4338ca" stroke-width="2"/>
+      </svg>
+      <div class="nm">Job Queue</div>
+      <div class="ds">Pages line up, waiting their turn</div>
+    </div>
+
+    <div class="arrow">→</div>
+
+    <div class="node hero-index">
+      <svg class="ico" viewBox="0 0 48 48">
+        <circle cx="24" cy="24" r="15" fill="#e0e7ff" stroke="#4338ca" stroke-width="3"/>
+        <circle cx="24" cy="24" r="5" fill="#fff" stroke="#4338ca" stroke-width="2.5"/>
+        <g stroke="#4338ca" stroke-width="3" stroke-linecap="round">
+          <line x1="24" y1="6"  x2="24" y2="12"/>
+          <line x1="24" y1="36" x2="24" y2="42"/>
+          <line x1="6"  y1="24" x2="12" y2="24"/>
+          <line x1="36" y1="24" x2="42" y2="24"/>
+        </g>
+      </svg>
+      <div class="nm">Indexing Worker</div>
+      <div class="ds">Reads &amp; understands each page</div>
+    </div>
+
+    <div class="arrow">→</div>
+
+    <div class="node">
+      <svg class="ico" viewBox="0 0 48 48">
+        <ellipse cx="24" cy="11" rx="15" ry="5" fill="#fce7f3" stroke="#be185d" stroke-width="2.5"/>
+        <path d="M9 11 V37 q0 5 15 5 q15 0 15-5 V11" fill="#fce7f3" stroke="#be185d" stroke-width="2.5"/>
+        <ellipse cx="24" cy="11" rx="15" ry="5" fill="#fce7f3" stroke="#be185d" stroke-width="2.5"/>
+        <path d="M19 26 l4 4 l7 -8" fill="none" stroke="#be185d" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"/>
+      </svg>
+      <div class="nm">Ready to search</div>
+      <div class="ds">Saved to the Search Index</div>
+    </div>
+  </div>
+
+  <p class="lane-note">This worker does all the heavy lifting <b>separately</b>, so indexing a large site never slows down live searches.</p>
+</div>
+
+
+<!-- ============== SHARED HELPERS ============== -->
+<div class="helpers">
+  <h3>Shared helpers both workers rely on</h3>
+  <div class="chips">
+    <div class="chip">
+      <svg class="ico" viewBox="0 0 40 40">
+        <circle cx="20" cy="20" r="17" fill="#f3e8ff" stroke="#7e22ce" stroke-width="2.5"/>
+        <path d="M20 7 L23 17 L33 20 L23 23 L20 33 L17 23 L7 20 L17 17 Z" fill="#9333ea"/>
+        <circle cx="20" cy="20" r="2.4" fill="#fff"/>
+      </svg>
+      <div class="nm">AI</div>
+      <div class="ds">Understands natural language</div>
+    </div>
+    <div class="chip">
+      <svg class="ico" viewBox="0 0 40 40">
+        <ellipse cx="20" cy="9" rx="13" ry="4.5" fill="#fce7f3" stroke="#be185d" stroke-width="2.3"/>
+        <path d="M7 9 V31 q0 4.5 13 4.5 q13 0 13 -4.5 V9" fill="#fce7f3" stroke="#be185d" stroke-width="2.3"/>
+        <ellipse cx="20" cy="9" rx="13" ry="4.5" fill="#fce7f3" stroke="#be185d" stroke-width="2.3"/>
+      </svg>
+      <div class="nm">Search Index</div>
+      <div class="ds">Finds the right page in an instant</div>
+    </div>
+    <div class="chip">
+      <svg class="ico" viewBox="0 0 40 40">
+        <ellipse cx="20" cy="9" rx="13" ry="4.5" fill="#dbeafe" stroke="#1d4ed8" stroke-width="2.3"/>
+        <path d="M7 9 V31 q0 4.5 13 4.5 q13 0 13 -4.5 V9" fill="#dbeafe" stroke="#1d4ed8" stroke-width="2.3"/>
+        <ellipse cx="20" cy="9" rx="13" ry="4.5" fill="#dbeafe" stroke="#1d4ed8" stroke-width="2.3"/>
+      </svg>
+      <div class="nm">Records</div>
+      <div class="ds">Keeps usage history</div>
+    </div>
+  </div>
+</div>
+
+
+<!-- ============== WHY IT MATTERS ============== -->
+<footer class="why">
+  <h3>Why it’s built this way</h3>
+  <div class="why-grid">
+    <div class="why-item">
+      <span class="dot">✓</span>
+      <p><b>Searches stay fast</b> — even when lots of people search at once.</p>
+    </div>
+    <div class="why-item">
+      <span class="dot">✓</span>
+      <p><b>Big sites index smoothly</b> — thousands of pages with no downtime.</p>
+    </div>
+    <div class="why-item">
+      <span class="dot">✓</span>
+      <p><b>Each part scales on its own</b> — more search power or more indexing power, independently.</p>
+    </div>
+    <div class="why-item">
+      <span class="dot">✓</span>
+      <p><b>Nothing gets lost</b> — queued work resumes safely if anything restarts.</p>
+    </div>
+  </div>
+</footer>
+
+</div>
+
+</body>
+</html>
