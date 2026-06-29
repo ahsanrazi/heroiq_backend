@@ -55,7 +55,9 @@ async def index_single_page(
     db: AsyncSession,
 ) -> IndexPageResponse:
     """Index a single page: hash check → chunk → embed → LLM card → Pinecone upsert."""
-    content_hash = _hash_content(page_data.content)
+    # Title is folded into the hash so a title-only edit (body unchanged) still
+    # triggers a re-index instead of being skipped as "content_unchanged".
+    content_hash = _hash_content(f"{page_data.title}\n{page_data.content}")
 
     # Check if already indexed with same hash
     result = await db.execute(
@@ -90,8 +92,11 @@ async def index_single_page(
             reason="empty_content",
         )
 
-    # Generate embeddings for all chunks
-    embed_result = await generate_embeddings_batch(chunks)
+    # Prefix the title onto every chunk so title keywords influence each chunk's
+    # embedding (search keeps the best-scoring chunk per page). The raw `chunks`
+    # list is kept untouched for the Pinecone metadata (chunk_text) below.
+    embed_inputs = [f"{page_data.title}\n\n{chunk}" for chunk in chunks]
+    embed_result = await generate_embeddings_batch(embed_inputs)
     embeddings = embed_result["embeddings"]
 
     # Log embedding usage
