@@ -20,6 +20,10 @@ class Settings(BaseSettings):
 
     # OpenAI
     OPENAI_API_KEY: str = ""
+    # Dedicated key for the brand-color (logo) endpoints — keeps their OpenAI
+    # usage/billing isolated from search + indexing. Falls back to
+    # OPENAI_API_KEY when unset (see `openai_logo_key`).
+    OPENAI_API_KEY_LOGO: str = ""
 
     # Redis (Arq job queue broker). Local default; in production use the DO
     # Managed Valkey TLS string, e.g. rediss://default:<pwd>@host:25061
@@ -84,6 +88,12 @@ class Settings(BaseSettings):
     @property
     def allowed_origins_list(self) -> list[str]:
         return [o.strip() for o in self.ALLOWED_ORIGINS.split(",") if o.strip()]
+
+    @property
+    def openai_logo_key(self) -> str:
+        """Key for the brand-color endpoints — dedicated logo key, or the shared
+        OPENAI_API_KEY as a fallback if the logo key isn't configured."""
+        return self.OPENAI_API_KEY_LOGO or self.OPENAI_API_KEY
 
     model_config = {"env_file": ".env", "extra": "ignore"}
 

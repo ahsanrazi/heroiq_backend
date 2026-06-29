@@ -35,3 +35,9 @@ sentry-sdk[fastapi]>=1.40.0
 
 # HTTP client
 httpx>=0.27.0
+
+# Image processing (brand-color extraction — pixel analysis)
+Pillow>=10.0.0
+
+# Multipart form parsing (file uploads on the brand-color endpoints)
+python-multipart>=0.0.9
