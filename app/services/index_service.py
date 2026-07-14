@@ -84,13 +84,20 @@ async def index_single_page(
     # Chunk content
     chunks = chunk_text(page_data.content)
     if not chunks:
-        # Empty / whitespace-only page → no chunks. Skip instead of calling
-        # OpenAI with an empty array (which returns HTTP 400).
-        return IndexPageResponse(
-            status="skipped",
-            wp_post_id=page_data.wp_post_id,
-            reason="empty_content",
-        )
+        # No usable body text (content tokenized to nothing). Fall back to a
+        # title-only vector so a titled page — e.g. a form/embed page whose body
+        # renders no text — is still findable by its title, instead of being
+        # silently invisible to search. Only truly title-less bodies are skipped
+        # (avoids calling OpenAI with an empty array, which returns HTTP 400).
+        title = (page_data.title or "").strip()
+        if title:
+            chunks = [title]
+        else:
+            return IndexPageResponse(
+                status="skipped",
+                wp_post_id=page_data.wp_post_id,
+                reason="empty_content",
+            )
 
     # Prefix the title onto every chunk so title keywords influence each chunk's
     # embedding (search keeps the best-scoring chunk per page). The raw `chunks`

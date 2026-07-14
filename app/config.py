@@ -42,13 +42,21 @@ class Settings(BaseSettings):
     APP_VERSION: str = "1.0.0"
     DEBUG: bool = False
 
-    # Chunking
-    CHUNK_SIZE: int = 500
-    CHUNK_OVERLAP: int = 50
+    # Chunking. Smaller windows give more focused chunks → sharper matches for
+    # short site-search queries against long-form pages. MIN_CHUNK_SIZE only
+    # drops the redundant trailing tail; the first/only window is always kept
+    # (chunking_service.chunk_text) so short pages are never lost.
+    CHUNK_SIZE: int = 250
+    CHUNK_OVERLAP: int = 40
     MIN_CHUNK_SIZE: int = 50
 
     # Search
-    SEARCH_TOP_K: int = 5
+    # Chunks fetched from Pinecone per query BEFORE dedup-to-page. Kept well above
+    # the 3 results shown: a content-heavy page can be many chunks, so a single
+    # page can occupy several of the top-k slots — fetch enough that dedup still
+    # yields 3 distinct pages. The number of results returned is caller-driven
+    # (SearchRequest.limit, default 3), not SEARCH_RESULTS_LIMIT (currently unused).
+    SEARCH_TOP_K: int = 20
     SEARCH_RESULTS_LIMIT: int = 3
 
     # External-call retry (OpenAI + Pinecone). Transient errors (timeouts,
